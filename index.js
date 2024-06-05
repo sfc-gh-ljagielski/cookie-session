@@ -58,6 +58,8 @@ function cookieSession (options) {
   debug('session options %j', opts)
 
   return function _cookieSession (req, res, next) {
+    const COOKIE_SIZE_LIMIT = 4000
+
     var cookies = new Cookies(req, res, {
       keys: keys
     })
@@ -125,7 +127,19 @@ function cookieSession (options) {
         } else if ((!sess.isNew || sess.isPopulated) && sess.isChanged) {
           // save populated or non-new changed session
           debug('save %s', name)
-          cookies.set(name, Session.serialize(sess), req.sessionOptions)
+          const serialized = Session.serialize(sess)
+          cookies.set(name, serialized.slice(0, COOKIE_SIZE_LIMIT), req.sessionOptions)
+          if (serialized.length > COOKIE_SIZE_LIMIT) {
+            let start = COOKIE_SIZE_LIMIT
+            let chunk = 1
+            while (start < serialized.length) {
+              cookies.set(name + `_${chunk}`, serialized.slice(start, start + COOKIE_SIZE_LIMIT), req.sessionOptions)
+              start += COOKIE_SIZE_LIMIT
+              chunk++
+            }
+
+            debug('cookie size limit exceeded')
+          }
         }
       } catch (e) {
         debug('error saving session %s', e.message)
@@ -275,6 +289,17 @@ function encode (body) {
 
 function tryGetSession (cookies, name, opts) {
   var str = cookies.get(name, opts)
+
+  // get chunks
+  let chunk = 1
+  while (true) {
+    const chunkCookie = cookies.get(name + `_${chunk}`, opts)
+    if (!chunkCookie) {
+      break
+    }
+    str += chunkCookie
+    chunk++
+  }
 
   if (!str) {
     return undefined
